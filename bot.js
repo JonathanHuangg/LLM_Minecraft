@@ -1,14 +1,16 @@
+// node bot.js to run
 const mineflayer = require('mineflayer')
 const mcDataLoader = require('minecraft-data')
 const pf = require('mineflayer-pathfinder')
 const readline = require('readline')
 
-const { getAllVisibleBlocks } = require('./perception_utils')
+const { getAllVisibleBlocks } = require('./mineflayer_apis/perception_utils')
+const { GameGraph } = require('./step_0_game_graph/main')
 const { pathfinder, Movements, goals } = pf
 
 const bot = mineflayer.createBot({
   host: '127.0.0.1',
-  port: 51737,
+  port: 57546,
   username: 'bot'
 })
 
@@ -17,14 +19,22 @@ bot.loadPlugin(pathfinder)
 
 bot.once('spawn', () => {
   console.log(JSON.stringify({ type: 'status', msg: 'spawned' }))
-
   const mcData = mcDataLoader(bot.version)
-  const movements = new Movements(bot, mcData)
-  bot.pathfinder.setMovements(movements)
+
+  // load data for graph
+  const graph = new GameGraph(mcData)
+  graph.fetch_game_data()
+
 
   // Walk to x=0 z=0
-  bot.pathfinder.setGoal(new goals.GoalXZ(0, 0))
+  walk_coord(bot, mcData, 0, 0)
 })
+
+function walk_coord(bot, mcData, x, y) {
+  const movements = new Movements(bot, mcData)
+  bot.pathfinder.setMovements(movements)
+  bot.pathfinder.setGoal(new goals.GoalXZ(x, y))
+}
 
 const rl = readline.createInterface({
   input: process.stdin,
