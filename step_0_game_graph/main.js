@@ -1,35 +1,55 @@
 const fs = require('fs')
 const path = require('path')
 
-class GameObjectNode {
-    constructor(name, children) {
-        this.name = name;
-        this.children = children;
-    }
-}
-
-/*
-name: ex: "planks_from_log"
-num_components_needed: List[int]
-components: List[GameOpNode]
-*/
-class GameOpNode {
-    constructor(name, num_components_needed, components) {
-        this.name = name;
-        this.num_components_needed = num_components_needed;
-        this.components = components;
-    }
-}
-
 class GameGraph {
     constructor(mcData) {
         this.game_data = mcData;
         this.recipes = null;
         this.items = null;
         this.blocks = null;
-        this.entities = null;        
+        this.entities = null;       
+        
+        
+        this.objects = new Map(); // objId ->(id, kind, name, meta) ex: (item:iron_ingot, item, irgon_ingot, {...})
+        this.ops = new Map(); // opId -> (id, kind, name, meta) ex: (id, kind, name, meta) -> (op:smelt_iron_ingot, "smelt", iron_ingot, {...})
+
+        this.requires = new Map(); // opId -> [{objId, count, role}]
+        this.produces = new Map(); // opId -> [{objId, count}]
+
+        this.producedBy = new Map(); // objId -> [opId]
     }
 
+    getName(kind, name) {
+        return `${kind}:${name}`;
+    }
+
+    addObject(kind, name, meta = {}) {
+        const id = this.getName(kind, name);
+        if (!this.objects.has(id)) {
+            this.objects.set(id, { id, kind, name, meta });
+        }
+        return id;
+    }
+
+    addOp(op) {
+        this.ops.set(op.id, op);
+        this.requires.set(op.id, []);
+        this.produces.set(op.id, []);
+    }
+
+    addRequire(opId, objId, count, role="consumed") {
+        this.requires.get(opId).push({ objId, count, role });
+    }
+
+    addProduce(opId, objId, count) {
+        this.produces.get(opId).push({ objId, count });
+        if (!this.producedBy.has(objId)) {
+            this.producedBy.set(objId, []);
+        }
+        this.producedBy.get(objId).push(opId);
+    }
+
+    // --- FETCHING GAME DATA
     inferRequiresTable(recipe) {
         if (typeof recipe.requiresTable === 'boolean') {
             return recipe.requiresTable;
