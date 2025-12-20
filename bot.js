@@ -3,6 +3,7 @@ const mineflayer = require('mineflayer')
 const mcDataLoader = require('minecraft-data')
 const pf = require('mineflayer-pathfinder')
 const readline = require('readline')
+const path = require('path')
 
 const { getAllVisibleBlocks } = require('./mineflayer_apis/perception_utils')
 const { GameGraph } = require('./step_0_game_graph/main')
@@ -10,7 +11,7 @@ const { pathfinder, Movements, goals } = pf
 
 const bot = mineflayer.createBot({
   host: '127.0.0.1',
-  port: 57546,
+  port: 12345,
   username: 'bot'
 })
 
@@ -22,9 +23,10 @@ bot.once('spawn', () => {
   const mcData = mcDataLoader(bot.version)
 
   // load data for graph
-  const graph = new GameGraph(mcData)
+  const outDir = path.join(process.cwd(), "assets", "gamegraph", "graph_1.21.8_craft");
+  const graph = new GameGraph(mcData, outDir)
   graph.fetch_game_data()
-
+  graph.buildGraph()
 
   // Walk to x=0 z=0
   walk_coord(bot, mcData, 0, 0)

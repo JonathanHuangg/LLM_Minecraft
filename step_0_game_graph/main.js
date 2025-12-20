@@ -1,23 +1,101 @@
 const fs = require('fs')
 const path = require('path')
+const { GraphDumper } = require('./utils')
 
+const OpKind = Object.freeze({
+    CRAFT: 'craft',
+    FURNACE: 'furnace',
+    SMOKE: "smoke",
+    BREW: "brew",
+    STONECUT: "stonecut",
+    SMITH: "smith",
+
+    // interaction
+    MINE: "mine",
+    KILL: "kill",
+    PLACE: "place",
+    USE: "use",
+})
 class GameGraph {
-    constructor(mcData) {
+    constructor(mcData, outdir) {
         this.game_data = mcData;
         this.recipes = null;
         this.items = null;
         this.blocks = null;
         this.entities = null;       
         
-        
-        this.objects = new Map(); // objId ->(id, kind, name, meta) ex: (item:iron_ingot, item, irgon_ingot, {...})
-        this.ops = new Map(); // opId -> (id, kind, name, meta) ex: (id, kind, name, meta) -> (op:smelt_iron_ingot, "smelt", iron_ingot, {...})
+        // outdated and changed for disk streaming but still useful:
+        // registry of objects in this world
+        // registry of operations that can be executed
+        // before operation is executed, need x objects 
+        // after operation is executed, produces y objects
+        // given an object, which operations produce it
 
-        this.requires = new Map(); // opId -> [{objId, count, role}]
-        this.produces = new Map(); // opId -> [{objId, count}]
+        this.writer = new GraphDumper(outdir);
 
-        this.producedBy = new Map(); // objId -> [opId]
+        this.seen_objects = new Set();
+        this.seen_operations = new Set();
+
+        this.errors = [];
     }
+
+    validateGraph() {
+        if (this.errors.length > 0) {
+            console.error('Graph validation failed with errors:', this.errors);
+            return false;
+        } 
+
+        console.log('Graph validation passed successfully.');
+        return true;
+    }
+
+    graphAlreadyBuilt() {
+        const countsPath = path.join(this.writer.outdir, "counts.json");
+        this.validateGraph();
+        return fs.existsSync(countsPath);
+    }
+    buildGraph() {
+        if (this.graphAlreadyBuilt()) {
+            console.log('Graph already built. Skipping build.');
+            return;
+        }
+        for (const [name, item] of Object.entries(this.items)) {
+            this.addObject('item', name, item);
+        }
+
+        for (const [name, block] of Object.entries(this.blocks)) {
+            this.addObject('block', name, block);
+        }
+
+        const craftingTableStateId = this.addObject('state', 'station:crafting_table', {});
+
+        for (const [outName, variants] of Object.entries(this.recipes)) {
+            if (!outName || outName == "air") {
+                continue;
+            }
+            const outObjId = this.addObject('item', outName, this.items[outName] ?? {});
+
+            for (const variant of variants) {
+                const opId = this.getName('op', `craft:${outName}#${variant.variant}`);
+                this.addOp({ id: opId, kind: OpKind.CRAFT, name: outName, meta: { variant, requiresTable: !!variant.requiresTable } });
+
+                if (variant.requiresTable) {
+                    this.addRequire(opId, craftingTableStateId, 1, 'precond');
+                }
+
+                for (const [inName, inCount] of Object.entries(variant.ingredients) ?? {}) {
+                    const inObjId = this.addObject('item', inName, this.items[inName] ?? {});
+                    this.addRequire(opId, inObjId, inCount, "consumed");
+                }
+
+                this.addProduce(opId, outObjId, variant.resultCount ?? 1);
+            }
+        }
+
+        this.writer.close();
+        this.validateGraph();
+    }
+
 
     getName(kind, name) {
         return `${kind}:${name}`;
@@ -25,28 +103,36 @@ class GameGraph {
 
     addObject(kind, name, meta = {}) {
         const id = this.getName(kind, name);
-        if (!this.objects.has(id)) {
-            this.objects.set(id, { id, kind, name, meta });
+        if (!this.seen_objects.has(id)) {
+            this.writer.writeObject({ id, kind, name });
+            this.seen_objects.add(id);
         }
         return id;
     }
 
     addOp(op) {
-        this.ops.set(op.id, op);
-        this.requires.set(op.id, []);
-        this.produces.set(op.id, []);
+        if (!this.seen_operations.has(op.id)) {
+            const meta = op.meta ?? {};
+            this.writer.writeOp({
+                id: op.id,
+                kind: op.kind,
+                name: op.name,
+                meta: { variant: meta.variant, requiresTable: meta.requiresTable }
+            });
+            this.seen_operations.add(op.id);
+        }
     }
 
     addRequire(opId, objId, count, role="consumed") {
-        this.requires.get(opId).push({ objId, count, role });
+        if (!this.seen_operations.has(opId)) this.errors.push(`requires references missing op: ${opId}`);
+        if (!this.seen_objects.has(objId)) this.errors.push(`requires references missing obj: ${objId} (op ${opId})`);
+        this.writer.writeRequire({ opId, objId, count, role });
     }
 
     addProduce(opId, objId, count) {
-        this.produces.get(opId).push({ objId, count });
-        if (!this.producedBy.has(objId)) {
-            this.producedBy.set(objId, []);
-        }
-        this.producedBy.get(objId).push(opId);
+        if (!this.seen_operations.has(opId)) this.errors.push(`produces references missing op: ${opId}`);
+        if (!this.seen_objects.has(objId)) this.errors.push(`produces references missing obj: ${objId} (op ${opId})`);
+        this.writer.writeProduce({ opId, objId, count });
     }
 
     // --- FETCHING GAME DATA
@@ -174,4 +260,4 @@ class GameGraph {
     }
 }
 
-module.exports = { GameObjectNode, GameOpNode, GameGraph };
+module.exports = { GameGraph };
