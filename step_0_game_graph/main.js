@@ -16,6 +16,17 @@ const OpKind = Object.freeze({
     PLACE: "place",
     USE: "use",
 })
+
+const STATIONS = [
+    'station:crafting_table',
+    'station:furnace',
+    'station:smoker',
+    'station:blast_furnace',
+    'station:stonecutter',
+    'station:smithing_table',
+    'station:brewing_stand',
+];
+
 class GameGraph {
     constructor(mcData, outdir) {
         this.game_data = mcData;
@@ -59,6 +70,7 @@ class GameGraph {
             console.log('Graph already built. Skipping build.');
             return;
         }
+
         for (const [name, item] of Object.entries(this.items)) {
             this.addObject('item', name, item);
         }
@@ -67,28 +79,52 @@ class GameGraph {
             this.addObject('block', name, block);
         }
 
-        const craftingTableStateId = this.addObject('state', 'station:crafting_table', {});
+        // Station states (schema stabilization)
+        const stationStateIds = {};
+        for (const station of STATIONS) {
+            stationStateIds[station] = this.addObject('state', station, {});
+        }
 
         for (const [outName, variants] of Object.entries(this.recipes)) {
-            if (!outName || outName == "air") {
-                continue;
-            }
+            if (!outName || outName === "air") continue;
+
             const outObjId = this.addObject('item', outName, this.items[outName] ?? {});
 
             for (const variant of variants) {
-                const opId = this.getName('op', `craft:${outName}#${variant.variant}`);
-                this.addOp({ id: opId, kind: OpKind.CRAFT, name: outName, meta: { variant, requiresTable: !!variant.requiresTable } });
+            const opId = this.getName('op', `craft:${outName}#${variant.variant}`);
 
-                if (variant.requiresTable) {
-                    this.addRequire(opId, craftingTableStateId, 1, 'precond');
-                }
+            const op = {
+                id: opId,
+                kind: OpKind.CRAFT,
+                name: outName,
+                meta: { variant: variant.variant, requiresTable: !!variant.requiresTable }
+            };
 
-                for (const [inName, inCount] of Object.entries(variant.ingredients) ?? {}) {
-                    const inObjId = this.addObject('item', inName, this.items[inName] ?? {});
-                    this.addRequire(opId, inObjId, inCount, "consumed");
-                }
+            // Must register op before edge-list writing to avoid validation errors
+            this.addOp(op);
 
-                this.addProduce(opId, outObjId, variant.resultCount ?? 1);
+            const requirements = [];
+
+            if (variant.requiresTable) {
+                requirements.push({
+                objId: stationStateIds['station:crafting_table'],
+                count: 1,
+                role: 'precond'
+                });
+            }
+
+            for (const [inName, inCount] of Object.entries(variant.ingredients ?? {})) {
+                const inObjId = this.addObject('item', inName, this.items[inName] ?? {});
+                requirements.push({ objId: inObjId, count: inCount, role: "consumed" });
+            }
+
+            const prod = [{ objId: outObjId, count: variant.resultCount ?? 1 }];
+
+            // New format (one record per op)
+            this.writer.writeOpRecord(op, requirements, prod);
+
+            for (const r of requirements) this.addRequire(opId, r.objId, r.count, r.role);
+            for (const p of prod) this.addProduce(opId, p.objId, p.count);
             }
         }
 

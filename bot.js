@@ -3,10 +3,10 @@ const mineflayer = require('mineflayer')
 const mcDataLoader = require('minecraft-data')
 const pf = require('mineflayer-pathfinder')
 const readline = require('readline')
+const { GameGraph } = require('./step_0_game_graph/main')
 const path = require('path')
 
 const { getAllVisibleBlocks } = require('./mineflayer_apis/perception_utils')
-const { GameGraph } = require('./step_0_game_graph/main')
 const { pathfinder, Movements, goals } = pf
 
 const bot = mineflayer.createBot({

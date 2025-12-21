@@ -2520,3 +2520,9 @@
 {"id":"block:potted_closed_eyeblossom","kind":"block","name":"potted_closed_eyeblossom"}
 {"id":"block:firefly_bush","kind":"block","name":"firefly_bush"}
 {"id":"state:station:crafting_table","kind":"state","name":"station:crafting_table"}
+{"id":"state:station:furnace","kind":"state","name":"station:furnace"}
+{"id":"state:station:smoker","kind":"state","name":"station:smoker"}
+{"id":"state:station:blast_furnace","kind":"state","name":"station:blast_furnace"}
+{"id":"state:station:stonecutter","kind":"state","name":"station:stonecutter"}
+{"id":"state:station:smithing_table","kind":"state","name":"station:smithing_table"}
+{"id":"state:station:brewing_stand","kind":"state","name":"station:brewing_stand"}
