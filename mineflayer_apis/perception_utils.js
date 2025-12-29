@@ -52,4 +52,41 @@ function getAllVisibleBlocks(
   return visibleBlocks
 }
 
+function getInventory(bot) {
+  return bot.inventory.items().map(item => ({
+    slot: item.slot,
+    name: item.name,
+    count: item.count,
+    type: item.type,
+    metadata: item.metadata
+  }))
+}
+
+// i think inventory does this already
+function getEquipment(bot) {
+  return null
+}
+
+function getVitals(bot) {
+  return {
+    health: bot.health,
+    maxHealth: bot.maxHealth,
+    food: bot.food,
+    saturation: bot.foodSaturation, 
+  }
+}
+
+function getWorldState(bot) {
+  return {
+    dimension: bot.game.dimension,
+    timeOfDay: bot.time.time,
+    day: Math.floor(bot.time.age / 24000),
+    position: {
+      x: bot.entity.position.x,
+      y: bot.entity.position.y,
+      z: bot.entity.position.z
+    },
+    isNight: bot.time.time >= 13000 && bot.time.time <= 23000
+  }
+}
 module.exports = { getAllVisibleBlocks }
