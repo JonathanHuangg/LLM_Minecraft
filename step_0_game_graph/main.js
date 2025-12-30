@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { GraphDumper } = require('./utils')
+const { fetchLootIndexForVersion } = require('./loot_fetcher')
 
 const OpKind = Object.freeze({
     CRAFT: 'craft',
@@ -11,6 +12,7 @@ const OpKind = Object.freeze({
     SMITH: "smith",
 
     // interaction
+    LOOT: "loot",
     MINE: "mine",
     KILL: "kill",
     PLACE: "place",
@@ -27,6 +29,8 @@ const STATIONS = [
     'station:brewing_stand',
 ];
 
+const GAMEGRAPH_DIR = path.resolve(__dirname, '..', 'assets', 'gamegraph');
+
 class GameGraph {
     constructor(mcData, outdir) {
         this.game_data = mcData;
@@ -34,7 +38,7 @@ class GameGraph {
         this.items = null;
         this.blocks = null;
         this.entities = null;       
-        
+        this.loot = null;
         // outdated and changed for disk streaming but still useful:
         // registry of objects in this world
         // registry of operations that can be executed
@@ -61,16 +65,11 @@ class GameGraph {
     }
 
     graphAlreadyBuilt() {
-        const countsPath = path.join(this.writer.outdir, "counts.json");
+        const countsPath = path.join(this.writer.outdir, "full_graph.jsonl");
         this.validateGraph();
         return fs.existsSync(countsPath);
     }
     buildGraph() {
-        if (this.graphAlreadyBuilt()) {
-            console.log('Graph already built. Skipping build.');
-            return;
-        }
-
         for (const [name, item] of Object.entries(this.items)) {
             this.addObject('item', name, item);
         }
@@ -128,6 +127,49 @@ class GameGraph {
             }
         }
 
+        // add the loot tables
+        const meta = this.loot.meta 
+        const tableToItems = this.loot.tableToItems
+
+        for (const [tableId, itemsSet] of Object.entries(tableToItems)) {
+            const sourceType = meta[tableId]?.sourceType ?? 'other'
+            let opKind = OpKind.LOOT 
+            let opName = tableId
+            let opId = this.getName('op', `loot:${tableId}`)
+
+            if (sourceType === 'entity') {
+                const entPath = tableId.split(':')[1].replace(/^entities\//, '')
+                const entityId = `minecraft:${entPath}`
+                opKind = OpKind.KILL
+                opName = entityId
+                opId = this.getName('op', `kill:${entityId}`) 
+            }
+
+            if (sourceType === 'block') {
+                const blkPath = tableId.split(':')[1].replace(/^blocks\//, '')
+                const blockId = `minecraft:${blkPath}`
+                opKind = OpKind.MINE
+                opName = blockId
+                opId = this.getName('op', `mine:${blockId}`)
+            }
+
+            const op = { id: opId, kind: opKind, name: opName, meta: { tableId } }
+            this.addOp(op)
+
+            const requirements = []
+
+            const prod = []
+            for (const itemId of itemsSet) {
+                const short = itemId.startsWith('minecraft:') ? itemId.split(':')[1] : itemId
+                const outObjId = this.addObject('item', short, this.items[short] ?? {})
+                prod.push({ objId: outObjId, count: 1 }) // count unknown; you can refine later
+            }
+            this.writer.writeOpRecord(op, requirements, prod)
+            for (const p of prod) {
+                this.addProduce(opId, p.objId, p.count)
+            }
+
+        }
         this.writer.close();
         this.validateGraph();
     }
@@ -208,8 +250,9 @@ class GameGraph {
         console.log('blocks:', blocksCount)
         console.log('entities:', entitiesCount)
 
-        const out_dir = path.join(process.cwd(), 'assets', 'gamegraph');
+        const out_dir = GAMEGRAPH_DIR;
         const out_path = path.join(out_dir, `minecraft_${version}.json`);
+        fs.mkdirSync(out_dir, { recursive: true })
 
         // items
         const items = {}
@@ -270,6 +313,8 @@ class GameGraph {
             })
         }
 
+
+
         const entities = mcData.entitiesArray ?? []
         const snapshot = {
             version: {
@@ -293,6 +338,42 @@ class GameGraph {
         this.recipes = recipes
         fs.writeFileSync(out_path, JSON.stringify(snapshot, null, 2))
         console.log(`Game data written to ${out_path}`)
+    }
+
+    async fetch_loot_data() {
+        const version = this.game_data.version.minecraftVersion
+        const cacheDir = path.join(GAMEGRAPH_DIR, '.cache')
+        const outDir = GAMEGRAPH_DIR
+        const outPath = path.join(outDir, `minecraft_${version}_loot.json`)
+        
+        const loot = await fetchLootIndexForVersion(version, cacheDir)
+
+        const setMapToArrays = (obj) =>
+            Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, Array.from(v ?? [])]))
+
+        const jsonOut = {
+            version,
+            counts: {
+                lootTables: Object.keys(loot.tableToItems).length,
+                itemsWithSources: Object.keys(loot.itemToSources).length
+            },
+            tableToItems: setMapToArrays(loot.tableToItems),
+            itemToSources: loot.itemToSources,
+            tableMeta: Object.fromEntries(
+                Object.entries(loot.meta).map(([k, v]) => [k, {
+                    sourceType: v.sourceType,
+                    items: Array.from(v.items ?? []),
+                    tags: Array.from(v.tags ?? []),
+                    tableRefs: Array.from(v.tableRefs ?? [])
+                }])
+            )
+        }
+
+        fs.mkdirSync(outDir, {recursive: true})
+        fs.writeFileSync(outPath, JSON.stringify(jsonOut, null, 2))
+        console.log(`Loot data written to ${outPath}`)
+
+        this.loot = loot
     }
 }
 

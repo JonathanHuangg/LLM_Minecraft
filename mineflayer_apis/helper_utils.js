@@ -1,3 +1,5 @@
+const Vec3 = require('vec3')
+
 function getEyePosition(bot) {
   return bot.entity.position.offset(0, bot.entity.height, 0)
 }
@@ -31,3 +33,5 @@ function raycastBlock(bot, origin, yaw, pitch, maxDist) {
     }
 
 }
+
+module.exports = {getEyePosition, wrapToPi, raycastBlock}

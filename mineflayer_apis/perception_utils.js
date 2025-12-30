@@ -1,4 +1,5 @@
 const Vec3 = require('vec3')
+const { getEyePosition, wrapToPi, raycastBlock } = require('./helper_utils')
 
 // --- Functions for Vision 
 
@@ -62,11 +63,6 @@ function getInventory(bot) {
   }))
 }
 
-// i think inventory does this already
-function getEquipment(bot) {
-  return null
-}
-
 function getVitals(bot) {
   return {
     health: bot.health,
@@ -89,4 +85,4 @@ function getWorldState(bot) {
     isNight: bot.time.time >= 13000 && bot.time.time <= 23000
   }
 }
-module.exports = { getAllVisibleBlocks }
+module.exports = { getAllVisibleBlocks, getInventory, getVitals, getWorldState }
