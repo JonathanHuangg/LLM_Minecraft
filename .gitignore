@@ -1,2 +1,16 @@
 *.jar
 assets/**/*.json
+
+# dependencies
+node_modules/
+
+# secrets / local config (never commit credentials; this project needs none)
+.env
+.env.*
+
+# logs and local scratch
+*.log
+.smoke-out/
+
+# cached Minecraft server jars downloaded by the loot fetcher
+assets/gamegraph/.cache/

@@ -29,7 +29,8 @@ bot.once('spawn', async () => {
   const mcData = mcDataLoader(mcVersion)
 
   // load data for graph
-  const outDir = path.join(process.cwd(), '..', 'assets', 'gamegraph', `graph_${mcVersion}_craft`)
+  // __dirname-based so this works from any working directory, not just LLM_Minecraft/
+  const outDir = path.join(__dirname, '..', 'assets', 'gamegraph', `graph_${mcVersion}_craft`)
   const graph = new GameGraph(mcData, outDir)
   graph.fetch_game_data()
   await graph.fetch_loot_data()
