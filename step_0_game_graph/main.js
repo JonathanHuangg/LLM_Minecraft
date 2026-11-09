@@ -127,8 +127,12 @@ class GameGraph {
             }
         }
 
-        // add the loot tables
-        const meta = this.loot.meta 
+        // add the loot tables (skipped when loot data was never fetched,
+        // e.g. GameGraphApi or an offline run: craft ops alone still build a valid graph)
+        if (!this.loot) {
+            console.warn('No loot data loaded (call fetch_loot_data() first for mine/kill/loot ops); building craft-only graph.')
+        } else {
+        const meta = this.loot.meta
         const tableToItems = this.loot.tableToItems
 
         for (const [tableId, itemsSet] of Object.entries(tableToItems)) {
@@ -170,6 +174,7 @@ class GameGraph {
             }
 
         }
+        } // end loot section (skipped when this.loot is null)
         this.writer.close();
         this.validateGraph();
     }
