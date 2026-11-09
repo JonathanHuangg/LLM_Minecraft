@@ -1,1 +1,23 @@
-{"dependencies":{"adm-zip":"^0.5.16","minecraft-data":"^3.119.0","mineflayer":"^4.39.0","mineflayer-pathfinder":"^2.4.5","vec3":"^0.2.0"},"description":"An LLM-driven Minecraft agent: a Mineflayer bot that perceives the world and plans against a game graph of every craft / mine / kill / loot operation.","engines":{"node":">=18"},"license":"UNLICENSED","main":"LLM_Minecraft/main.js","name":"llm-minecraft","scripts":{"smoke":"node scripts/smoke-test.js","start":"node LLM_Minecraft/main.js","test":"node scripts/smoke-test.js"},"version":"0.1.0"}
+{
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "minecraft-data": "^3.119.0",
+    "mineflayer": "^4.39.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.2.0"
+  },
+  "description": "An LLM-driven Minecraft agent: a Mineflayer bot that perceives the world and plans against a game graph of every craft / mine / kill / loot operation.",
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "main": "LLM_Minecraft/main.js",
+  "name": "llm-minecraft",
+  "scripts": {
+    "smoke": "node scripts/smoke-test.js",
+    "start": "node LLM_Minecraft/main.js",
+    "test": "node scripts/smoke-test.js",
+    "test:agent": "node scripts/test-agent.js"
+  },
+  "version": "0.1.0"
+}

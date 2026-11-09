@@ -1,16 +1,19 @@
 # LLM Minecraft
 
 A Minecraft agent built on [Mineflayer](https://github.com/PrismarineJS/mineflayer):
-a bot that **perceives** the world around it and **plans against a game graph**
-of everything that can be crafted, mined, killed for, or looted in Minecraft.
+a bot that **perceives** the world around it, **plans against a game graph**
+of everything that can be crafted, mined, killed for, or looted in Minecraft,
+and **acts on that plan** — mining blocks and crafting items until it achieves
+a goal, with a real LLM in the loop when one is configured.
 
-> **Status: foundation, not a finished agent.** The perception layer and the
-> game graph work (verified — see below). There is **no LLM wired up yet**:
-> nothing in this repo calls a language model, and the bot currently takes no
-> action after perceiving. The planning steps (persistent world model, choosing
-> an option from the graph, survival/maintenance) are comment stubs in
-> `LLM_Minecraft/main.js` waiting to be built. This README describes what the
-> code actually does today, not the end goal.
+> **Status: a working agent.** The bot runs a perceive → plan → decide → act
+> loop against a live 1.18 server and has achieved `wooden_pickaxe` from an
+> empty inventory end to end (verified — see below). The LLM is wired up
+> (Gemini or OpenAI, key from an environment variable, never committed); with
+> no key set the agent runs in **demo mode**, where the deterministic graph
+> planner picks every action and the loop is otherwise identical. A live LLM
+> call has not been verified in this environment (no key is available here);
+> the client itself is tested with a mocked transport.
 
 Background design notes live in the
 [project Google Doc](https://docs.google.com/document/d/1PKdUJSIH_MHH2Jtnqrk8QXMNHKLbwhBjtYqUvQuSmQs/edit?usp=sharing)
@@ -19,7 +22,11 @@ Background design notes live in the
 ## How it fits together
 
 ```
-LLM_Minecraft/main.js          the bot: connects, builds the graph, perceives
+LLM_Minecraft/main.js          entry point: connects, builds the graph, runs the agent loop
+  ├─ LLM_Minecraft/agent.js    the loop: perceive -> plan -> decide -> act, one JSON line per tick
+  ├─ LLM_Minecraft/planner.js  deterministic planner over the game graph (backward chaining)
+  ├─ LLM_Minecraft/actor.js    executes steps against the live bot (mine, craft, place table)
+  ├─ LLM_Minecraft/llm.js      Gemini / OpenAI client (REST, no extra deps; env keys only)
   ├─ mineflayer_apis/          perception: what the bot can see / sense
   └─ step_0_game_graph/        step 0: the game graph the planner will use
        └─ assets/gamegraph/   generated data (snapshots + graph files)
@@ -69,20 +76,47 @@ What the bot can sense, all in `perception_utils.js` (helpers in
 - `getWorldState(bot)` — dimension, time of day, day number, position,
   whether it is night.
 
-### 3. The bot (`LLM_Minecraft/main.js`)
+### 3. The agent loop (`LLM_Minecraft/agent.js`, `planner.js`, `actor.js`, `llm.js`)
 
 On spawn the bot:
 
 1. Loads `minecraft-data` for its version and builds the game graph
-   (`fetch_game_data()` → `fetch_loot_data()` → `buildGraph()`).
-2. Takes one perception snapshot: visible blocks, inventory, vitals, world
-   state — then stops. The snapshot is computed into local variables and not
-   yet used for anything; there is no movement, mining, crafting, or LLM call
-   after this point.
+   (`fetch_game_data()` → `fetch_loot_data()` → `buildGraph()`), then loads
+   the built graph for planning.
+2. Runs the loop until the goal item is in its inventory (or it gets stuck,
+   or `MAX_STEPS` ticks pass). Each tick:
+   - **Perceive** — visible blocks, inventory, vitals, world state.
+   - **Plan** — the deterministic planner backward-chains through the graph
+     from the goal to the current inventory and returns the next executable
+     step (mine a block, craft an item). It accounts for tool requirements
+     (stone needs a wooden pickaxe) and for the crafting table as a
+     persistent station, not a consumable.
+   - **Decide** — with an LLM configured, the model picks between the
+     grounded candidate actions and explains why; without one (demo mode)
+     the planner's next step is taken. A malformed LLM reply falls back to
+     the planner's step, never to an invented action.
+   - **Act** — the actor walks to the block and digs it, or crafts the item
+     (placing a crafting table first when the recipe needs one). If a mine
+     step fails because the block is not nearby, the whole block family is
+     excluded and the next tick's plan falls back to another variant
+     (oak unreachable → spruce).
+3. Logs one JSON line per tick (`{"type":"agent-tick", ...}`) and a final
+   `agent-result` line, so a run is auditable after the fact. Exit code is
+   0 only when the goal is achieved.
 
-Connection settings are hardcoded at the top of `main.js`: host
-`127.0.0.1`, port `61417`, username `bot`, Minecraft **1.18**. The pathfinder
-plugin is loaded but not used yet.
+Connection and agent settings come from environment variables (see
+`.env.example`): `MC_HOST`, `MC_PORT`, `MC_USERNAME`,
+`MINECRAFT_VERSION` (default `1.18`), `GOAL` (default `wooden_pickaxe`),
+`MAX_STEPS` (default `60`), `LLM_PROVIDER` (`gemini` / `openai` / `auto`),
+`GEMINI_API_KEY` / `OPENAI_API_KEY`, `LLM_MODEL`.
+
+### 4. The LLM (`LLM_Minecraft/llm.js`)
+
+Gemini (`gemini-2.0-flash` by default) and OpenAI (`gpt-4o-mini` by default)
+over their REST APIs with Node's built-in `fetch` — no extra dependency.
+Keys come from environment variables only; nothing reads a key from disk,
+and keys are never logged. With no key set, `detectLLMConfig()` returns
+null and the agent runs in demo mode (see above).
 
 ## Prerequisites
 
@@ -107,26 +141,37 @@ npm install
 #    the 1.18 graph (craft ops only) into a scratch dir, then cleans up.
 npm test
 
-# 2. Start your 1.18 server on 127.0.0.1:61417, then start the bot
+# 2. Agent tests — planner, LLM client (mocked fetch), actor (fake bot),
+#    and the full loop against a simulated world. No server, no network.
+npm run test:agent
+
+# 3. Start your 1.18 server on 127.0.0.1:61417, then start the bot
 #    (works from any directory; it resolves paths relative to the file).
+#    scripts/e2e-server.sh does the server setup + run for you:
+#      ./scripts/e2e-server.sh wooden_pickaxe 60
 npm start
+
+# With an LLM in the loop (keys are never committed; see .env.example):
+#   GEMINI_API_KEY=... npm start
+#   OPENAI_API_KEY=... LLM_PROVIDER=openai npm start
+#   GOAL=stone_pickaxe npm start
 ```
 
 What you should see on spawn: `{"type":"status","msg":"spawned"}`, followed
 by the `minecraft-data` summary, `Game data written to …`, `Loot data written
-to …`, and `Graph validation passed successfully.`
+to …`, and `Graph validation passed successfully.`, then one
+`{"type":"agent-tick", ...}` line per action and a final
+`GOAL ACHIEVED: …` line. Without a key you will also see
+`{"type":"status","msg":"demo mode: no LLM key set, planner decides"}`.
 
 ### Without a server
 
-If nothing is listening on `127.0.0.1:61417`, the bot fails cleanly and exits:
+If nothing is listening on `127.0.0.1:61417`, the bot fails cleanly and exits
+with code 1:
 
 ```
 Bot connection error: connect ECONNREFUSED 127.0.0.1:61417
 ```
-
-(The raw `ECONNREFUSED` stack trace is also printed by Mineflayer, and the
-process currently exits with code 0 even on connection failure — that is a
-known wart, not a successful run.)
 
 ## Generated data
 
@@ -153,26 +198,61 @@ generated on every run instead.
 - `npm test` — passes: all modules load, 1.18 data loads (1,100 items,
   898 blocks, 113 entities), craft-only graph builds with zero validation
   errors (1,297 ops).
+- `npm run test:agent` — passes (51 checks): LLM client request/response
+  shapes for Gemini and OpenAI with a mocked fetch (keys sent as headers,
+  never in URLs); planner produces the correct 9-step wooden-pickaxe plan
+  from an empty inventory (3 logs → planks → table → sticks → pickaxe) and
+  the correct stone-pickaxe plan (wooden pickaxe first, then 3 stone, and
+  cobblestone plans via mining stone, not a literal cobblestone block);
+  the simulated loop achieves `wooden_pickaxe` in 9 ticks and
+  `stone_pickaxe` end to end, and falls back from oak to spruce when oak
+  mining fails; the actor mines/crafts against a fake bot and discards a
+  remembered crafting table that is out of reach.
 - Full pipeline (`fetch_game_data` + `fetch_loot_data` + `buildGraph` for
   1.18) — passes: loot fetch pulls 986 tables / 919 items from the Mojang
   jar, full graph is 2,283 ops, matching the committed
   `graph_1.18_craft/full_graph.jsonl` op count.
+- **Live end-to-end (real vanilla 1.18 server, offline mode, demo mode):**
+  from an empty inventory in a fresh world, the bot achieved
+  `wooden_pickaxe` in 9 ticks and exited 0: mined 3 oak logs, crafted
+  planks, crafted and placed a crafting table, crafted sticks, crafted the
+  wooden pickaxe. On a fresh world (oak 7 blocks away, stone 4 away) it
+  then achieved `stone_pickaxe` in 7 ticks and exited 0, reusing the
+  wooden pickaxe from the earlier run: mined 1 oak log, crafted planks
+  and a second table, mined stone 3 times, crafted the stone pickaxe.
+  The run also caught and fixed three real bugs: the planner tried a
+  literal cobblestone block first (now prefers naturally occurring stone),
+  a path failure wrongly excluded the whole stone family (exclusion is now
+  absence-only), and an abandoned goto's `stop()` call rejected the next
+  goto (abandoned gotos are now left for the pathfinder's own
+  `goal_updated` cleanup).
 - `node LLM_Minecraft/main.js` with no server — fails cleanly with
-  `ECONNREFUSED` on `127.0.0.1:61417` and exits (see above). Not tested
-  against a live server in this pass — that needs a running 1.18 server.
+  `ECONNREFUSED` on `127.0.0.1:61417` and exits 1 (the old exit-0 wart is
+  fixed).
 - No secrets in the repo: no API keys, tokens, or credentials are used or
-  stored anywhere; `.gitignore` covers `.env` and `node_modules/`.
+  stored anywhere; `.gitignore` covers `.env` and `node_modules/`, and
+  `.env.example` documents the variables with empty values.
 
 ## Known limitations / next steps
 
-- **No LLM, no actions.** The bot perceives once and stops; the planning and
-  action sections of `main.js` are stubs. The next step is a loop that turns
-  the perception snapshot + graph into a chosen op and executes it (the
-  pathfinder plugin is already loaded for movement).
+- **A live LLM call has not been verified.** The Gemini/OpenAI client is
+  tested with a mocked fetch only; no key was available in this
+  environment. Run it once with a real key and check the tick log shows
+  `"via":"llm"` decisions.
+- **Mine ops for player-made blocks.** Fixed during the stone-pickaxe run:
+  the planner now prefers naturally occurring blocks (stone over a literal
+  cobblestone block), and family exclusion only fires on absence, so one
+  bad path cannot kill the only route to the goal. The graph still models
+  the mine op by its block, so a goal that can only be mined from a
+  player-made block (e.g. stone bricks) still reports stuck honestly.
+- **No survival behavior yet.** The loop does not eat, avoid mobs, or
+  handle night; the E2E server runs on peaceful difficulty for that reason.
+  Health/food are perceived and shown to the LLM, but nothing acts on them.
 - **`OpKind` lists more op types than are emitted.** `furnace`, `smoke`,
   `brew`, `stonecut`, and `smith` are defined but `buildGraph()` only emits
   `craft`, `mine`, `kill`, and `loot` — smelting/brewing/etc. recipes are not
-  in the graph yet.
+  in the graph yet, so goals needing them (iron ingots, torches via coal)
+  report stuck honestly.
 - **Loot counts are placeholders.** Loot/mine/kill ops record `count: 1` for
   every drop (`count unknown; you can refine later` in the code) — drop
   quantities and chances are not modeled.
@@ -184,4 +264,3 @@ generated on every run instead.
 - **No `package.json` existed** before this change, so none of the five
   dependencies (`mineflayer`, `minecraft-data`, `mineflayer-pathfinder`,
   `vec3`, `adm-zip`) were declared. Added with a lockfile.
-- The bot **exits 0 on connection failure** (see above).
